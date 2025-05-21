@@ -1,11 +1,26 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { toast } from 'react-toastify';
+import { useNavigate } from 'react-router-dom';
+import { useSelector } from 'react-redux';
 import { getIcon } from '../utils/iconUtils';
 import MainFeature from '../components/MainFeature';
+import { getPatientsCount } from '../services/patientService';
+import { getAppointmentsCount } from '../services/appointmentService';
+import { getStaffCount } from '../services/staffService';
+import { getTotalRevenue } from '../services/billingService';
 
 const Home = () => {
   const [activeTab, setActiveTab] = useState('dashboard');
+  const [stats, setStats] = useState({
+    patients: { value: '...', loading: true },
+    appointments: { value: '...', loading: true },
+    staff: { value: '...', loading: true },
+    revenue: { value: '...', loading: true }
+  });
+  
+  const navigate = useNavigate();
+  const { isAuthenticated, user } = useSelector(state => state.user);
   
   // Icons for tabs
   const DashboardIcon = getIcon('layout-dashboard');
@@ -13,10 +28,12 @@ const Home = () => {
   const AppointmentsIcon = getIcon('calendar');
   const BillingIcon = getIcon('credit-card');
   const InventoryIcon = getIcon('package');
+  const SignOutIcon = getIcon('log-out');
   
   // Welcome notification on component mount
   useState(() => {
-    toast.info("Welcome to MediFlow Hospital Management System", {
+    const userName = user?.firstName || 'there';
+    toast.info(`Welcome to MediFlow Hospital Management System, ${userName}!`, {
       icon: "👋"
     });
   }, []);
@@ -28,6 +45,53 @@ const Home = () => {
     { id: 'billing', label: 'Billing', icon: BillingIcon },
     { id: 'inventory', label: 'Inventory', icon: InventoryIcon },
   ];
+
+  // Function to load dashboard statistics
+  const loadDashboardStats = useCallback(async () => {
+    try {
+      // Fetch patient count
+      setStats(prev => ({ ...prev, patients: { ...prev.patients, loading: true } }));
+      const patientCount = await getPatientsCount();
+      setStats(prev => ({ ...prev, patients: { value: patientCount.toLocaleString(), loading: false } }));
+
+      // Fetch upcoming appointments count
+      setStats(prev => ({ ...prev, appointments: { ...prev.appointments, loading: true } }));
+      const appointmentCount = await getAppointmentsCount('scheduled');
+      setStats(prev => ({ ...prev, appointments: { value: appointmentCount.toLocaleString(), loading: false } }));
+
+      // Fetch staff count
+      setStats(prev => ({ ...prev, staff: { ...prev.staff, loading: true } }));
+      const staffCount = await getStaffCount();
+      setStats(prev => ({ ...prev, staff: { value: staffCount.toLocaleString(), loading: false } }));
+
+      // Fetch total revenue
+      setStats(prev => ({ ...prev, revenue: { ...prev.revenue, loading: true } }));
+      const revenue = await getTotalRevenue();
+      const formattedRevenue = new Intl.NumberFormat('en-US', {
+        style: 'currency',
+        currency: 'USD',
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 0
+      }).format(revenue);
+      setStats(prev => ({ ...prev, revenue: { value: formattedRevenue, loading: false } }));
+    } catch (error) {
+      toast.error('Error loading dashboard statistics');
+      console.error('Error loading dashboard statistics:', error);
+      setStats(prev => ({
+        ...prev,
+        patients: { value: '0', loading: false },
+        appointments: { value: '0', loading: false },
+        staff: { value: '0', loading: false },
+        revenue: { value: '$0', loading: false }
+      }));
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activeTab === 'dashboard') {
+      loadDashboardStats();
+    }
+  }, [activeTab, loadDashboardStats]);
   
   return (
     <div className="min-h-screen flex flex-col">
@@ -61,8 +125,17 @@ const Home = () => {
               })}
             </div>
             
-            <div className="w-10 h-10 rounded-full bg-surface-200 dark:bg-surface-700 flex items-center justify-center text-surface-700 dark:text-surface-300 cursor-pointer">
-              {React.createElement(getIcon('user'), { size: 20 })}
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-surface-200 dark:bg-surface-700 flex items-center justify-center text-surface-700 dark:text-surface-300">
+                {React.createElement(getIcon('user'), { size: 20 })}
+              </div>
+              <button className="hidden md:flex items-center gap-2 text-surface-600 dark:text-surface-400 hover:text-primary dark:hover:text-primary-light py-2 px-3 rounded-lg" onClick={() => {
+                const { ApperUI } = window.ApperSDK;
+                ApperUI.logout();
+              }}>
+                <SignOutIcon size={18} />
+                <span>Sign Out</span>
+              </button>
             </div>
           </div>
         </div>
@@ -102,10 +175,10 @@ const Home = () => {
               {/* Stats Overview */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 {[
-                  { label: 'Patients', value: '1,245', icon: 'users', color: 'bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400' },
-                  { label: 'Appointments', value: '42', icon: 'calendar', color: 'bg-purple-50 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400' },
-                  { label: 'Staff', value: '38', icon: 'users', color: 'bg-green-50 dark:bg-green-900/30 text-green-600 dark:text-green-400' },
-                  { label: 'Revenue', value: '$24,800', icon: 'dollar-sign', color: 'bg-amber-50 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400' }
+                  { label: 'Patients', value: stats.patients.value, icon: 'users', color: 'bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400', loading: stats.patients.loading },
+                  { label: 'Appointments', value: stats.appointments.value, icon: 'calendar', color: 'bg-purple-50 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400', loading: stats.appointments.loading },
+                  { label: 'Staff', value: stats.staff.value, icon: 'users', color: 'bg-green-50 dark:bg-green-900/30 text-green-600 dark:text-green-400', loading: stats.staff.loading },
+                  { label: 'Revenue', value: stats.revenue.value, icon: 'dollar-sign', color: 'bg-amber-50 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400', loading: stats.revenue.loading }
                 ].map((stat, index) => {
                   const StatIcon = getIcon(stat.icon);
                   return (
@@ -121,7 +194,19 @@ const Home = () => {
                       </div>
                       <div>
                         <p className="text-surface-500 dark:text-surface-400 text-sm">{stat.label}</p>
-                        <p className="text-xl font-semibold">{stat.value}</p>
+                        <p className="text-xl font-semibold">
+                          {stat.loading ? (
+                            <span className="inline-block w-16 h-6 bg-surface-200 dark:bg-surface-700 animate-pulse rounded"></span>
+                          ) : (
+                            <motion.span
+                              initial={{ opacity: 0 }}
+                              animate={{ opacity: 1 }}
+                              transition={{ duration: 0.3 }}
+                            >
+                              {stat.value}
+                            </motion.span>
+                          )}
+                        </p>
                       </div>
                     </motion.div>
                   );

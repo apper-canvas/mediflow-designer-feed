@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'react-toastify';
+import { format } from 'date-fns';
 import { getIcon } from '../utils/iconUtils';
+import { getAppointments, createAppointment, updateAppointment, deleteAppointment } from '../services/appointmentService';
 
 const MainFeature = () => {
   // Icons
@@ -17,17 +19,17 @@ const MainFeature = () => {
   const NoteIcon = getIcon('file-text');
 
   // State for appointments
-  const [appointments, setAppointments] = useState(() => {
-    const saved = localStorage.getItem('appointments');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        console.error("Failed to parse appointments:", e);
-        return [];
-      }
-    }
-    return [];
+  const [appointments, setAppointments] = useState([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  
+  // State for current appointment being deleted
+  const [deletingId, setDeletingId] = useState(null);
+  
+  // State for tracking if appointments are being loaded
+  const [initialLoadComplete, setInitialLoadComplete] = useState(false);
+  
   });
   
   // New appointment form state
@@ -43,9 +45,32 @@ const MainFeature = () => {
   const [errors, setErrors] = useState({});
   const [isEditing, setIsEditing] = useState(false);
   
-  // Save appointments to localStorage when they change
+  // Load appointments from the database when component mounts
   useEffect(() => {
-    localStorage.setItem('appointments', JSON.stringify(appointments));
+    fetchAppointments();
+  }, []);
+  
+  // Fetch appointments from the API
+  const fetchAppointments = async () => {
+    try {
+      setIsLoading(true);
+      const data = await getAppointments({
+        // Filter for upcoming appointments (optional)
+        status: ['scheduled', 'confirmed']
+      });
+      
+      // Format appointments for display
+      const formattedAppointments = data.map(apt => ({
+        id: apt.Id,
+        patientName: apt.patient?.Name || apt.Name,
+        date: apt.date,
+        time: apt.time,
+        purpose: apt.purpose,
+        status: apt.status
+      }));
+      
+      setAppointments(formattedAppointments);
+      setInitialLoadComplete(true);
   }, [appointments]);
   
   const validateForm = () => {
@@ -77,25 +102,47 @@ const MainFeature = () => {
     setIsEditing(false);
   };
   
-  const handleAddAppointment = () => {
+  const handleAddAppointment = async () => {
     if (validateForm()) {
-      if (isEditing) {
-        // Update existing appointment
-        setAppointments(appointments.map(app => 
-          app.id === formData.id ? formData : app
-        ));
-        toast.success("Appointment updated successfully!");
-      } else {
-        // Add new appointment
-        const newAppointment = {
-          ...formData,
-          id: Date.now()
-        };
-        setAppointments([...appointments, newAppointment]);
-        toast.success("New appointment added!");
+      try {
+        setIsSubmitting(true);
+        
+        if (isEditing) {
+          // Update existing appointment
+          const appointmentData = {
+            Name: formData.patientName, // Use patient name as appointment name
+            date: formData.date,
+            time: formData.time,
+            purpose: formData.purpose,
+            status: formData.status
+          };
+          
+          await updateAppointment(formData.id, appointmentData);
+          toast.success("Appointment updated successfully!");
+        } else {
+          // Add new appointment
+          const appointmentData = {
+            Name: formData.patientName, // Use patient name as appointment name
+            date: formData.date,
+            time: formData.time,
+            purpose: formData.purpose,
+            status: formData.status
+          };
+          
+          await createAppointment(appointmentData);
+          toast.success("New appointment added!");
+        }
+        
+        // Refresh appointments list
+        fetchAppointments();
+      } catch (error) {
+        console.error('Error saving appointment:', error);
+        toast.error(isEditing ? "Failed to update appointment" : "Failed to add appointment");
+      } finally {
+        setIsSubmitting(false);
+        setShowForm(false);
+        resetForm();
       }
-      setShowForm(false);
-      resetForm();
     }
   };
   
@@ -105,11 +152,32 @@ const MainFeature = () => {
     setShowForm(true);
   };
   
-  const handleDeleteAppointment = (id) => {
-    setAppointments(appointments.filter(app => app.id !== id));
-    toast.success("Appointment deleted successfully!");
+  const handleDeleteAppointment = async (id) => {
+    try {
+      setIsDeleting(true);
+      setDeletingId(id);
+      
+      await deleteAppointment(id);
+      
+      // Update local state after successful deletion
+      setAppointments(appointments.filter(app => app.id !== id));
+      toast.success("Appointment deleted successfully!");
+    } catch (error) {
+      console.error('Error deleting appointment:', error);
+      toast.error("Failed to delete appointment");
+    } finally {
+      setIsDeleting(false);
+      setDeletingId(null);
+    }
   };
   
+  const handleDeleteConfirmation = (id) => {
+    // Show confirmation dialog
+    if (window.confirm("Are you sure you want to delete this appointment?")) {
+      handleDeleteAppointment(id);
+    }
+  };
+
   const handleCancelForm = () => {
     setShowForm(false);
     resetForm();
@@ -117,14 +185,11 @@ const MainFeature = () => {
   
   // Format date for display
   const formatDate = (dateStr) => {
-    if (!dateStr) return '';
-    const date = new Date(dateStr);
-    return date.toLocaleDateString('en-US', {
+    return format(new Date(dateStr), 'MMM d, yyyy');
+  };
       month: 'short',
       day: 'numeric',
       year: 'numeric'
-    });
-  };
   
   return (
     <motion.div 
@@ -287,7 +352,7 @@ const MainFeature = () => {
               <button 
                 className="btn btn-primary flex items-center gap-2" 
                 onClick={handleAddAppointment}
-              >
+                  disabled={isSubmitting}>
                 <SaveIcon size={18} />
                 <span>{isEditing ? 'Update' : 'Save'}</span>
               </button>
@@ -302,7 +367,12 @@ const MainFeature = () => {
           <div className="py-8 text-center">
             <p className="text-surface-500 dark:text-surface-400 mb-2">No appointments scheduled</p>
             <button 
-              className="btn btn-outline flex items-center gap-2 mx-auto mt-2" 
+        {isLoading && !initialLoadComplete ? (
+          <div className="py-8 text-center">
+            <div className="w-10 h-10 border-4 border-surface-200 dark:border-surface-700 border-t-primary rounded-full animate-spin mx-auto mb-4"></div>
+            <p className="text-surface-500 dark:text-surface-400">Loading appointments...</p>
+          </div>
+        ) : appointments.length === 0 ? (
               onClick={() => setShowForm(true)}
             >
               <PlusIcon size={16} />
@@ -357,8 +427,9 @@ const MainFeature = () => {
                         </button>
                         <button 
                           className="p-1 text-surface-500 hover:text-red-500 dark:text-surface-400 dark:hover:text-red-400"
-                          onClick={() => handleDeleteAppointment(appointment.id)}
+                          onClick={() => handleDeleteConfirmation(appointment.id)}
                           aria-label="Delete appointment"
+                          disabled={isDeleting && deletingId === appointment.id}
                         >
                           <TrashIcon size={18} />
                         </button>
